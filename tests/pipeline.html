@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>pipeline test</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block;width:100vw;height:56.25vw;max-height:100vh;max-width:177.78vh;margin:auto}</style>
+</head>
+<body>
+<canvas></canvas>
+<script>
+// 管线测试页：seek(t) 无状态绘制 + 种子随机 + 闭式弹簧 + WebGL 离屏着色器 + 帧号条码 + 0.5s 同步闪光
+'use strict';
+const q = new URLSearchParams(location.search);
+const W = +(q.get('w') || 1920), H = +(q.get('h') || 1080);
+const canvas = document.querySelector('canvas');
+canvas.width = W; canvas.height = H;
+const ctx = canvas.getContext('2d', { alpha: false });
+const S = W / 1920; // 虚拟坐标 1920×1080
+window.DURATION = 1;
+
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+// 欠阻尼弹簧闭式解：0 → 1
+function spring(t, freq = 1.6, zeta = 0.35) {
+  if (t <= 0) return 0;
+  const w = 2 * Math.PI * freq, wd = w * Math.sqrt(1 - zeta * zeta);
+  return 1 - Math.exp(-zeta * w * t) * (Math.cos(wd * t) + (zeta * w / wd) * Math.sin(wd * t));
+}
+
+const rnd = mulberry32(14);
+const stars = Array.from({ length: 900 }, () => ({ x: rnd() * 1920, y: rnd() * 1080, m: rnd() ** 3, ph: rnd() * 6.283 }));
+
+// WebGL 离屏：吸积环测试着色器
+const glc = document.createElement('canvas'); glc.width = Math.round(640 * S); glc.height = Math.round(640 * S);
+const gl = glc.getContext('webgl', { antialias: false, premultipliedAlpha: false });
+let prog = null, uT = null, renderer = 'none';
+if (gl) {
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+  const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+  prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, 'attribute vec2 p;varying vec2 uv;void main(){uv=p;gl_Position=vec4(p,0.,1.);}'));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, `precision highp float;varying vec2 uv;uniform float t;
+    void main(){vec2 p=uv*1.3;float r=length(p);float a=atan(p.y,p.x);
+      float ring=exp(-pow((r-0.62)/0.07,2.))*(0.75+0.25*sin(a*9.-t*6.));
+      float photon=exp(-pow((r-0.36)/0.012,2.));
+      vec3 c=vec3(1.0,0.72,0.42)*ring*1.4+vec3(1.0,0.9,0.8)*photon;
+      c*=step(0.33,r);gl_FragColor=vec4(c,1.);}`));
+  gl.linkProgram(prog); gl.useProgram(prog);
+  const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  uT = gl.getUniformLocation(prog, 't');
+}
+window.PAGE_INFO = { webgl: renderer };
+
+window.seek = function seek(t) {
+  ctx.setTransform(S, 0, 0, S, 0, 0);
+  ctx.fillStyle = '#05070c'; ctx.fillRect(0, 0, 1920, 1080);
+  for (const s of stars) {
+    const a = 0.25 + 0.75 * s.m * (0.8 + 0.2 * Math.sin(s.ph + t * 7));
+    ctx.fillStyle = `rgba(220,230,255,${a})`;
+    ctx.fillRect(s.x, s.y, 1 + s.m * 2, 1 + s.m * 2);
+  }
+  if (gl) {
+    gl.viewport(0, 0, glc.width, glc.height); gl.uniform1f(uT, t); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(glc, 1200, 220, 640, 640); ctx.globalCompositeOperation = 'source-over';
+  }
+  // 弹簧驱动的「飞船」方块
+  const x = 160 + 820 * spring(t);
+  ctx.fillStyle = '#e8e4dc'; ctx.fillRect(x, 500, 180, 40);
+  ctx.fillStyle = '#ff8a3d'; ctx.fillRect(x - 60 - 30 * Math.sin(t * 40), 508, 60 + 30 * Math.sin(t * 40), 24);
+  ctx.fillStyle = '#9aa3b2'; ctx.font = '500 34px "DejaVu Sans Mono", monospace';
+  ctx.fillText(`PIPELINE TEST  t=${t.toFixed(4)}s  webgl: ${renderer}`, 160, 160);
+  // 0.5 s 整帧白闪（和音频 0.5 s 的滴答对齐，用于音画同步测试）
+  const ms = Math.round(t * 1000);
+  if (ms >= 500 && ms < 517) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 1920, 1000); }
+  // 帧号条码：12 位 = round(t·1000) 毫秒
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 1020, 12 * 60 + 20, 60);
+  for (let i = 0; i < 12; i++) { ctx.fillStyle = (ms >> (11 - i)) & 1 ? '#fff' : '#000'; ctx.fillRect(10 + i * 60, 1030, 40, 40); }
+};
+window.ready = document.fonts.ready.then(() => true);
+seek(0);
+
+// 普通浏览器：实时循环预览
+if (!navigator.webdriver) {
+  const t0 = performance.now();
+  const loop = (now) => { seek(((now - t0) / 1000) % window.DURATION); requestAnimationFrame(loop); };
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
