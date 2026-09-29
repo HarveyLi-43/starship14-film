@@ -25,6 +25,8 @@
  *   --x264-preset <p>              默认 slow
  *   --audio <wav>                  混入的音轨
  *   --lufs <n>                     响度目标，默认 -14
+ *   --maxrate <r>                  拼接时按 CRF + 码率上限重编码（如 12M），用于交付（GitHub 单文件 < 100 MB）；
+ *                                  不给则无损拷贝分段（CRF 16 母版）
  *   --skip-existing                跳过已存在且比页面文件新的分段（断点续渲）
  *   --no-concat                    只渲染分段，不拼接
  *   --out <mp4>                    默认 out/<preset>.mp4
@@ -217,7 +219,13 @@ if (args.audio) {
   const m = JSON.parse(log.slice(log.lastIndexOf('{'), log.lastIndexOf('}') + 1));
   const af = `loudnorm=${target}:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true,aresample=48000`;
   console.log(`audio     ${path.relative(process.cwd(), audio)}  measured ${m.input_i} LUFS → ${LUFS} LUFS`);
-  muxArgs.push('-i', audio, '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-af', af, '-c:a', 'aac', '-b:a', '256k', '-ar', '48000');
+  muxArgs.push('-i', audio, '-map', '0:v', '-map', '1:a', '-af', af, '-c:a', 'aac', '-b:a', '256k', '-ar', '48000');
+}
+if (args.maxrate) {
+  const mr = String(args.maxrate), buf = `${parseFloat(mr) * 2}${mr.replace(/[\d.]/g, '')}`;
+  muxArgs.push('-c:v', 'libx264', '-preset', X264_PRESET, '-crf', String(CRF), '-maxrate', mr, '-bufsize', buf, '-profile:v', 'high', '-pix_fmt', 'yuv420p',
+    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv');
+  console.log(`video     re-encode for delivery: crf ${CRF}, maxrate ${mr}`);
 } else {
   muxArgs.push('-c:v', 'copy');
 }

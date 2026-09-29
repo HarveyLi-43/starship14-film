@@ -297,7 +297,7 @@ float ringD(float r){
   else if(r < 2.03) d = 0.04;
   else d = 0.52 + 0.08*sin(r*170.);
   if(abs(r - 2.214) < 0.006) d = 0.04;
-  d *= 0.82 + 0.36*(vn3(vec3(r*420., 0.5, 0.5)) - 0.5);
+  d *= 0.72 + 0.56*(vn3(vec3(r*420., 0.5, 0.5)) - 0.5) + 0.18*(vn3(vec3(r*1900., 3.5, 0.5)) - 0.5);
   return clamp(d, 0., 0.96);
 }
 bool hitPlanet(vec3 ro, vec3 rd, out float t){
@@ -318,7 +318,7 @@ vec3 saturnCol(vec3 p, vec3 sun){
   return base*(ndl*sh*1.3 + 0.012);
 }
 vec3 ringCol(vec3 q, float r, vec3 sun){
-  vec3 base = mix(vec3(0.76, 0.70, 0.58), vec3(0.42, 0.38, 0.32), smoothstep(1.53, 1.24, r) + 0.35*smoothstep(2.03, 2.27, r));
+  vec3 base = 1.25*mix(vec3(0.80, 0.72, 0.58), vec3(0.42, 0.38, 0.32), smoothstep(1.53, 1.24, r) + 0.35*smoothstep(2.03, 2.27, r));
   float tp; float sh = hitPlanet(q, sun, tp) ? 0.03 : 1.;
   return base*sh*(0.3 + 0.9*abs(sun.y));
 }
@@ -328,7 +328,8 @@ vec3 otherSky(vec3 d, vec3 c){
   vec3 ax = normalize(cross(c, vec3(0.2, 1., 0.1)));
   float band = exp(-pow(dot(d, ax)/0.035, 2.))*pow(g, 14.);
   col += vec3(1.0, 0.85, 0.62)*band*1.6;
-  col += starLayer(d, 170., .22, 57.)*1.3;
+  col += vec3(0.85, 0.6, 0.38)*pow(g, 2.5)*0.22*(0.4 + 0.9*fbm3(d*4. + 9.));   // 另一边的暖色星云
+  col += starLayer(d, 170., .22, 57.)*1.6 + starLayer(d, 420., .12, 91.)*0.8;
   return col;
 }
 vec3 lensSky(vec3 ro, vec3 rd){
@@ -563,7 +564,7 @@ const vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
 gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-const T = { bg: target(W, H), scene: target(W, H), mips: [] };
+const T = { bg: target(W, H), bgHalf: target(W >> 1, H >> 1), scene: target(W, H), mips: [] };
 for (let k = 1; k <= 6; k++) T.mips.push(target(Math.max(1, W >> k), Math.max(1, H >> k)));
 T.layer = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, T.layer);
 for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
@@ -635,7 +636,11 @@ function renderGL(fx, t) {
       bhPrepare(b.rc);
       Object.assign(u, { uTab: BH.tab, uRow: BH.row, uTabInfo: [BH.NA, BH.NP, BH.phiMax], uAlphaC: BH.alphaC });
     }
-    pass(P.space, T.bg.fb, W, H, u);
+    const half = b.mode === 4 && W >= 1280;              // 1080p 下黑洞半分辨率渲染，省约一半时间
+    const tgt = half ? T.bgHalf : T.bg;
+    u.uRes = [tgt.w, tgt.h];
+    pass(P.space, tgt.fb, tgt.w, tgt.h, u);
+    fx.bgTex = tgt.tex;
   }
   gl.bindTexture(gl.TEXTURE_2D, T.layer);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -643,7 +648,7 @@ function renderGL(fx, t) {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-  pass(P.comp, T.scene.fb, W, H, { uBg: T.bg.tex, uLayer: T.layer, uBgOn: bgOn ? 1 : 0 });
+  pass(P.comp, T.scene.fb, W, H, { uBg: fx.bgTex || T.bg.tex, uLayer: T.layer, uBgOn: bgOn ? 1 : 0 });
 
   const post = fx.post;
   let src = T.scene;
@@ -1273,11 +1278,11 @@ function S10(c, lt, fx) {
 }
 
 // ---------------------------------------------------------------- S11 土星 36.8–41.6 · S12 穿越 41.6–44.8
-const WH_POS = [3.3, 0.35, 1.2], WH_R = 0.75, SAT_SUN = v3.norm([-0.55, 0.3, -0.78]);
+const WH_POS = [3.3, 0.35, 1.2], WH_R = 0.75, SAT_SUN = v3.norm([-0.9, 0.36, -0.12]);
 function satCam(lt) {
   const pan = 34 * spring(lt - 1.6, 0.35, 1), dolly = spring(lt - 3.0, 0.3, 1);
-  const pos0 = [-0.5, 0.45, -3.3];
-  return { pos: v3.add(pos0, v3.mul(v3.sub(WH_POS, pos0), 0.3 * dolly)), rot: camBasis(-18 + pan, -5, -10), tanFov: Math.tan(30 * DEG) };
+  const pos0 = [-0.35, 0.19, -2.85];
+  return { pos: v3.add(pos0, v3.mul(v3.sub(WH_POS, pos0), 0.3 * dolly)), rot: camBasis(-22 + pan, -2.5, -8), tanFov: Math.tan(32 * DEG) };
 }
 function S11(c, lt, fx) {
   const cam = satCam(lt);
@@ -1377,20 +1382,32 @@ window.PAGE_INFO = { webgl: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) :
 window.ready = loadFonts().then(() => { seek(0); return true; });
 
 // 普通浏览器：实时循环预览（空格暂停，←/→ 一拍，?t= 定格）
+// 有 out/score.wav（node audio/score.mjs 生成）时，点一下页面即带声播放，画面跟着音轨的时钟走
 if (!navigator.webdriver) {
   const hold = Q.has('t') ? +Q.get('t') : null;
-  let playing = hold == null, cur = hold ?? 0, base = performance.now() / 1000 - cur;
+  let playing = hold == null, cur = hold ?? 0, base = performance.now() / 1000 - cur, audioOn = false;
+  const audio = new Audio('out/score.wav'); audio.preload = 'auto';
+  const syncAudio = () => { if (!audioOn) return; audio.currentTime = cur; if (playing) audio.play().catch(() => {}); else audio.pause(); };
+  const enableAudio = () => { if (!audioOn) { audioOn = true; syncAudio(); } };
+  addEventListener('pointerdown', enableAudio);
   window.ready.then(() => {
     seek(cur);
-    const loop = () => { if (playing) { cur = (performance.now() / 1000 - base) % DURATION; seek(cur); } requestAnimationFrame(loop); };
+    const loop = () => {
+      if (playing) {
+        if (audioOn && !audio.paused && !audio.ended) { cur = audio.currentTime; base = performance.now() / 1000 - cur; }
+        else { cur = (performance.now() / 1000 - base) % DURATION; if (audioOn && audio.ended) syncAudio(); }
+        seek(Math.min(cur, DURATION - 1e-3));
+      }
+      requestAnimationFrame(loop);
+    };
     requestAnimationFrame(loop);
   });
   addEventListener('keydown', (e) => {
-    if (e.code === 'Space') { playing = !playing; base = performance.now() / 1000 - cur; e.preventDefault(); }
-    if (e.code === 'ArrowRight' || e.code === 'ArrowLeft') { cur = (((cur + (e.code === 'ArrowRight' ? 0.8 : -0.8)) % DURATION) + DURATION) % DURATION; base = performance.now() / 1000 - cur; seek(cur); }
+    enableAudio();
+    if (e.code === 'Space') { playing = !playing; base = performance.now() / 1000 - cur; syncAudio(); e.preventDefault(); }
+    if (e.code === 'ArrowRight' || e.code === 'ArrowLeft') { cur = (((cur + (e.code === 'ArrowRight' ? 0.8 : -0.8)) % DURATION) + DURATION) % DURATION; base = performance.now() / 1000 - cur; seek(cur); syncAudio(); }
   });
 }
-
 </script>
 </body>
 </html>
