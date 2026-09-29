@@ -24,6 +24,7 @@
  *   --x264-preset <p>              默认 slow
  *   --audio <wav>                  混入的音轨
  *   --lufs <n>                     响度目标，默认 -14
+ *   --skip-existing                跳过已存在且比页面文件新的分段（断点续渲）
  *   --no-concat                    只渲染分段，不拼接
  *   --out <mp4>                    默认 out/<preset>.mp4
  */
@@ -138,14 +139,19 @@ const segFile = (k) => path.join(segDir, `seg_${String(k).padStart(4, '0')}.mp4`
 const f0 = Math.max(0, Math.floor(+(args.start ?? 0) * FPS));
 const f1 = Math.min(totalFrames, Math.ceil(+(args.end ?? DURATION) * FPS));
 const todo = [];
-for (let k = Math.floor(f0 / segFrames); k * segFrames < f1; k++) todo.push(k);
+const pageMtime = fs.statSync(pagePath).mtimeMs;
+for (let k = Math.floor(f0 / segFrames); k * segFrames < f1; k++) {
+  if (args['skip-existing'] && fs.existsSync(segFile(k)) && fs.statSync(segFile(k)).mtimeMs > pageMtime) continue;
+  todo.push(k);
+}
+if (!todo.length) console.log('render    nothing to do (all segments up to date)');
 
-const nWorkers = Math.max(1, Math.min(+(args.workers ?? Math.min(4, os.cpus().length)), todo.length));
+const nWorkers = Math.max(1, Math.min(+(args.workers ?? Math.min(4, os.cpus().length)), todo.length || 1));
 const workers = [probe];
 while (workers.length < nWorkers) workers.push(await openPage(browser));
 
 const framesTodo = todo.reduce((n, k) => n + Math.min(segFrames, totalFrames - k * segFrames), 0);
-console.log(`render    segments ${todo[0]}–${todo[todo.length - 1]} of ${nSeg}  (${framesTodo} frames, ${nWorkers} workers)`);
+if (todo.length) console.log(`render    ${todo.length} segments (${todo[0]}–${todo[todo.length - 1]} of ${nSeg}), ${framesTodo} frames, ${nWorkers} workers`);
 
 let done = 0;
 const t0 = Date.now();

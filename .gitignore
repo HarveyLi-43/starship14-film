@@ -5,3 +5,4 @@ out/*
 !out/contact.png
 frames/
 *.wav
+.cache/
