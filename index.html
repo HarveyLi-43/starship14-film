@@ -364,6 +364,7 @@ vec3 sceneSaturn(vec3 ro, vec3 rd){
 
 // ---------------- 虫洞隧道
 vec3 tunnel(vec2 q){
+  float scrim = mix(1., 0.3, smoothstep(-0.2, -0.55, q.y));   // 文字 3 所在的下三分之一压暗
   q += uTunShake;
   float cr = cos(uTunRoll), sr = sin(uTunRoll); q = mat2(cr, -sr, sr, cr)*q;
   float r = length(q), a = atan(q.y, q.x);
@@ -372,12 +373,13 @@ vec3 tunnel(vec2 q){
   float slots = 110.;
   float sa = (a + warp)/TAU*slots; float si = floor(sa), sf = fract(sa);
   float hs = h13(vec3(si, 3., 7.));
-  float streak = smoothstep(0.5, 0.0, abs(sf - 0.5))*step(0.5, hs);
+  float streak = smoothstep(0.5, 0.0, abs(sf - 0.5))*step(0.62, hs);
   float along = pow(vn3(vec3(si*1.7, z*(0.4 + 0.8*hs), 1.)), 3.);
   float ripple = 0.6 + 0.4*sin(z*5. - uTun*16.);
   vec3 cold = vec3(0.72, 0.82, 1.), warm = vec3(1., 0.8, 0.55);
   vec3 col = mix(cold, warm, smoothstep(0.7, 0.05, r))*streak*along*ripple*2.4;
   col += warm*exp(-r*r/(0.004 + 0.02*uTun))*(0.25 + 0.5*uTun);
+  col *= scrim;
   col += vec3(1., 0.92, 0.78)*uTunLine*exp(-pow(q.y/(0.003 + 0.02*uTunLine), 2.))*exp(-pow(q.x/(0.1 + 1.6*uTunLine), 2.))*4.;
   return col;
 }
@@ -701,13 +703,14 @@ function puff(c, x, y, r, lit, shade, lx, ly, a = 1) {
   g.addColorStop(0, rgba(lit, a)); g.addColorStop(0.5, rgba(mix(lit, shade, 0.55), a)); g.addColorStop(0.82, rgba(shade, a * 0.8)); g.addColorStop(1, rgba(shade, 0));
   c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, TAU); c.fill();
 }
-// 逆光云团：暗色主体 + 朝光一侧的亮边
-function rimPuff(c, x, y, r, body, rim, lx, ly, a = 1) {
-  const ox = x + lx * r * 0.16, oy = y + ly * r * 0.16;
-  const g1 = c.createRadialGradient(ox, oy, r * 0.55, ox, oy, r * 1.03);
+// 逆光云团：暗色主体 + 朝光一侧的亮边（pass 1 只画亮边，pass 2 只画云体）
+function rimPuff(c, x, y, r, body, rim, lx, ly, a = 1, pass = 0) {
+  const ox = x + lx * r * 0.24, oy = y + ly * r * 0.24;
+  const g1 = c.createRadialGradient(ox, oy, r * 0.72, ox, oy, r * 1.03);
   g1.addColorStop(0, rgba(rim, a)); g1.addColorStop(0.75, rgba(rim, a * 0.6)); g1.addColorStop(1, rgba(rim, 0));
-  c.fillStyle = g1; c.beginPath(); c.arc(ox, oy, r * 1.03, 0, TAU); c.fill();
-  const bx = x - lx * r * 0.05, by = y - ly * r * 0.05;
+  if (pass !== 2) { c.fillStyle = g1; c.beginPath(); c.arc(ox, oy, r * 1.03, 0, TAU); c.fill(); }
+  if (pass === 1) return;
+  const bx = x - lx * r * 0.08, by = y - ly * r * 0.08;
   const g2 = c.createRadialGradient(bx, by, 0, bx, by, r);
   g2.addColorStop(0, rgba(body, a)); g2.addColorStop(0.78, rgba(body, a * 0.96)); g2.addColorStop(1, rgba(body, 0));
   c.fillStyle = g2; c.beginPath(); c.arc(bx, by, r, 0, TAU); c.fill();
@@ -792,6 +795,12 @@ function aftView(c, o) {
   c.moveTo(ax - p[0] * Ra, ay - p[1] * Ra); c.lineTo(N[0] - p[0] * Rn, N[1] - p[1] * Rn);
   c.quadraticCurveTo(N[0] + ua[0] * Rn * 2.6, N[1] + ua[1] * Rn * 2.6, N[0] + p[0] * Rn, N[1] + p[1] * Rn);
   c.lineTo(ax + p[0] * Ra, ay + p[1] * Ra); c.closePath(); c.fill();
+  c.strokeStyle = rgba('#000000', 0.13); c.lineWidth = Math.max(1, Ra * 0.006);   // 纵向焊缝，交代圆柱体
+  for (const fx of [-0.72, -0.35, 0.05, 0.42]) { c.beginPath(); c.moveTo(ax + p[0] * fx * Ra + ua[0] * Ra * tilt * 0.9, ay + p[1] * fx * Ra + ua[1] * Ra * tilt * 0.9); c.lineTo(N[0] + p[0] * fx * Rn, N[1] + p[1] * fx * Rn); c.stroke(); }
+  for (let k = 1; k < 7; k++) {                        // 环向焊缝（透视压缩）
+    const f = 1 - Math.pow(1 - k / 7, 1.6), cx2 = lerp(ax, N[0], f), cy2 = lerp(ay, N[1], f), rr = lerp(Ra, Rn, f);
+    c.beginPath(); c.ellipse(cx2, cy2, rr, rr * tilt, rot, Math.PI, TAU); c.stroke();
+  }
   // 迎风面防热瓦从一侧边缘露出
   const ts = o.tileSide ?? -1;
   c.fillStyle = PAL.tile; c.beginPath();
@@ -804,7 +813,9 @@ function aftView(c, o) {
     const q = [at(0, 0.05), at(0.34, 0.16), at(0.34, 0.8), at(0, 1.05)];
     c.beginPath(); c.moveTo(...q[0]); q.slice(1).forEach((v) => c.lineTo(...v)); c.fill();
   }
-  ellipse(c, ax, ay, Ra, Ra * tilt, rot); c.fillStyle = '#101114'; c.fill();
+  ellipse(c, ax, ay, Ra, Ra * tilt, rot);
+  const gd = c.createRadialGradient(ax, ay, 0, ax, ay, Ra); gd.addColorStop(0, '#2a2d32'); gd.addColorStop(0.8, '#15171a'); gd.addColorStop(1, '#0c0d0f');
+  c.fillStyle = gd; c.fill();
   c.strokeStyle = rgba(PAL.steel, 0.7); c.lineWidth = Math.max(1, Ra * 0.012); c.stroke();
   const pos = (fx, fy) => [ax + p[0] * fx * Ra - ua[0] * fy * Ra * tilt, ay + p[1] * fx * Ra - ua[1] * fy * Ra * tilt];
   const engs = o.engines.map((e) => ({ ...e, fx: e.r * Math.cos(e.th), fy: e.r * Math.sin(e.th) })).sort((a, b) => a.fy - b.fy);
@@ -859,7 +870,7 @@ const ENGINES33 = (() => {
   for (let k = 0; k < 20; k++) e.push({ r: 3.9, a: (TAU * k) / 20, br: 0.54, ti: 0.8 + k * 0.018 });
   return e;
 })();
-const RING_PX = 250;   // 外环发动机圆心半径（像素）——与片尾卡冈图雅光子环对齐，循环时首尾咬合
+const RING_PX = 300;   // 外环发动机圆心半径（像素）——与片尾卡冈图雅光子环对齐，循环时首尾咬合
 const S1_STEAM = (() => { const r = mulberry32(101), a = []; for (let i = 0; i < 26; i++) a.push({ a: r() * TAU, r0: 820 + r() * 420, sp: 40 + r() * 90, rad: 120 + r() * 170 }); return a; })();
 
 function S1(c, lt, fx) {
@@ -915,7 +926,7 @@ function S1(c, lt, fx) {
 // ---------------------------------------------------------------- S2 凌日 2.4–6.4
 const S2_PUFFS = (() => {
   const r = mulberry32(202), a = [];
-  for (let i = 0; i < 72; i++) { const u = r(); a.push({ dx: (r() - 0.5) * 1400 * (0.3 + 0.7 * u), e: 0.03 + 0.36 * r() * (1 - 0.45 * u), rad: 55 + 135 * r() * (1 - 0.35 * u), gr: r() }); }
+  for (let i = 0; i < 72; i++) { const u = r(); a.push({ dx: (r() - 0.5) * 1400 * (0.3 + 0.7 * u), e: 0.03 + 0.36 * r() * (1 - 0.45 * u), rad: 95 + 160 * r() * (1 - 0.35 * u), gr: r() }); }
   return a.sort((p, q) => q.e - p.e);
 })();
 function S2(c, lt, fx) {
@@ -945,11 +956,11 @@ function S2(c, lt, fx) {
   drawStack(c, { sil: 1, silCol: '#170c06', rim: 0.6 * onSun + 0.06, rimCol: '#FFD28A', rimW: 1.6, pxm });
   c.restore();
   glow(c, rx, ry + 12, 90, PAL.flameCore, 0.9);
-  for (const p of S2_PUFFS) {                          // 逆光的蒸汽云
+  for (const pass of [1, 2]) for (const p of S2_PUFFS) {   // 逆光的蒸汽云
     const grow = 1 + 0.25 * lt * (0.5 + p.gr), x = rx + p.dx * (1 + 0.08 * lt), y = Y(p.e + 0.02 * lt * p.gr);
     if (y - p.rad * grow > 1100) continue;
     const d = v2norm([sunX - x, sy - y]);
-    rimPuff(c, x, y, p.rad * grow, '#2a1a12', '#E39A4E', d[0], d[1], 0.95);
+    rimPuff(c, x, y, p.rad * grow, '#2a1a12', '#C9803F', d[0], d[1], 0.95, pass);
   }
   glow(c, rx, Y(0.12), 420, PAL.flameEdge, 0.5);
   glow(c, rx, Y(0.12), 160, PAL.flameHot, 0.6);
@@ -963,7 +974,7 @@ function S2(c, lt, fx) {
 // ---------------------------------------------------------------- S3 声障 6.4–9.6
 const S3_CIRRUS = (() => { const r = mulberry32(303), a = []; for (let i = 0; i < 10; i++) a.push({ x: r() * 2600, y: r() * 1300, len: 300 + r() * 500, w: 10 + r() * 22, a: 0.08 + r() * 0.16 }); return a; })();
 function S3(c, lt, fx) {
-  const zoom = 1 + 0.32 * spring(lt, 0.3, 1), pxm = 3.2 * zoom;
+  const zoom = 1 + 0.32 * spring(lt, 0.3, 1), pxm = 4.1 * zoom;
   const ang = (20 + (12 * lt) / 3.2) * DEG, dir = [Math.sin(ang), -Math.cos(ang)];
   const drift = 36 * Math.sin((Math.PI * lt) / 3.2);
   const cx = 900 + dir[0] * drift, cy = 560 + dir[1] * drift;
@@ -986,10 +997,9 @@ function S3(c, lt, fx) {
   drawStack(c, { ls: 1, frost: 0.6, pxm });
   const vc = smooth(0.7, 1.0, lt) * (1 - smooth(1.8, 2.2, lt)) * clamp(0.55 + 0.6 * fbm1(lt * 30, 4));   // 跨声速凝结云
   if (vc > 0.01) {
-    g = c.createLinearGradient(-18, 0, 18, 0); g.addColorStop(0, rgba('#FFFFFF', 0.25 * vc)); g.addColorStop(1, rgba('#FFF6EA', 0.7 * vc));
-    c.fillStyle = g; c.beginPath(); c.moveTo(-5.4, -84);
-    c.quadraticCurveTo(-13, -70, -17 - 2 * vc, -50); c.lineTo(-11, -52); c.quadraticCurveTo(-8, -66, -4.6, -76);
-    c.lineTo(4.6, -76); c.quadraticCurveTo(8, -66, 11, -52); c.lineTo(17 + 2 * vc, -50); c.quadraticCurveTo(13, -70, 5.4, -84); c.closePath(); c.fill();
+    g = c.createLinearGradient(0, -86, 0, -50); g.addColorStop(0, rgba('#FFFFFF', 0)); g.addColorStop(0.75, rgba('#FFFFFF', 0.35 * vc)); g.addColorStop(1, rgba('#FFF6EA', 0.8 * vc));
+    c.fillStyle = g; c.beginPath(); c.moveTo(-4.8, -86); c.quadraticCurveTo(-12, -70, -16 - 2 * vc, -50);
+    c.quadraticCurveTo(0, -46, 16 + 2 * vc, -50); c.quadraticCurveTo(12, -70, 4.8, -86); c.closePath(); c.fill();
   }
   c.restore();
   Object.assign(fx.post, { shimmer: 0.5, shimmerY: 0, bloom: 0.7 });
@@ -1049,7 +1059,7 @@ function S4(c, lt, fx) {
 }
 // ---------------------------------------------------------------- S5 海上 12.8–16.0
 const S5_WAVES = (() => { const r = mulberry32(505), a = []; for (let i = 0; i < 260; i++) { const d = r(); a.push({ x: r() * 2200 - 140, d, len: 20 + 120 * d * r(), ph: r() * TAU }); } return a; })();
-const S5_STEAM = (() => { const r = mulberry32(506), a = []; for (let i = 0; i < 46; i++) a.push({ a: r() * Math.PI, sp: 0.4 + r() * 0.8, rad: 40 + r() * 110, up: r(), t0: r() * 0.5 }); return a; })();
+const S5_STEAM = (() => { const r = mulberry32(506), a = []; for (let i = 0; i < 70; i++) a.push({ a: r() * Math.PI, sp: 0.3 + r() * 0.9, rad: 70 + r() * 150, up: r(), t0: r() * 0.6 }); return a.sort((p, q) => q.up - p.up); })();
 function S5(c, lt, fx) {
   const HZ = 640, BX = 900, pxm = 7.8;
   const roll = 0.010 * Math.sin(TAU * 0.15 * lt + 1.0) + 0.004 * Math.sin(TAU * 0.33 * lt), bob = 7 * Math.sin(TAU * 0.21 * lt + 0.4);
@@ -1093,7 +1103,7 @@ function S5(c, lt, fx) {
       const kk = Math.max(0, k - s.t0); if (kk <= 0) continue;
       const rr = 40 + 520 * s.sp * (1 - Math.exp(-kk / 1.1)), up = (50 + 190 * s.up) * (1 - Math.exp(-kk / 1.4));
       const x = BX + Math.cos(s.a) * rr * 1.25, y = HZ - up + Math.sin(s.a) * rr * 0.05;
-      puff(c, x, y, s.rad * (0.6 + 0.9 * (1 - Math.exp(-kk / 0.8))), mix(PAL.steamLit, '#FFFFFF', 0.2), '#6f6866', 0.8, -0.4, 0.55);
+      puff(c, x, y, s.rad * (0.6 + 0.9 * (1 - Math.exp(-kk / 0.8))), mix(PAL.steamLit, '#FFFFFF', 0.2), '#6f6866', 0.8, -0.4, 0.78);
     }
   }
   c.restore();
@@ -1112,8 +1122,8 @@ function S6(c, lt, fx) {
     rsl: [{ on: 1, heat: 0.4, gim: [-gim, 0] }, { on: 1, heat: 0.4, gim: [-gim, 0] }, { on: 1, heat: 0.4, gim: [-gim, 0] }],
   });
   if (lt >= 1.2) eng[0].cool = mix(PAL.nozzleCool, '#2a1712', smooth(1.2, 3.2, lt));
-  c.save(); c.translate(900, 780); c.scale(push, push); c.translate(-900, -780);
-  aftView(c, { A: [1010, 700], axisAng: -0.1, len: 640, Ra: 230, Rn: 150, tilt: 0.42, engines: eng, t: lt + 16, plumeLen: 760, tileSide: -1 });
+  c.save(); c.translate(560, 640); c.scale(push, push); c.translate(-560, -640);
+  aftView(c, { A: [640, 600], axisAng: 1.2, len: 1700, Ra: 250, Rn: 190, tilt: 0.56, engines: eng, t: lt + 16, plumeLen: 700, tileSide: 1 });
   c.restore();
 }
 
@@ -1149,7 +1159,7 @@ function S8(c, lt, fx) {
   const top = (x) => 470 - 0.05 * (x - 960);
   c.beginPath(); c.moveTo(-300, top(-300)); c.lineTo(2300, top(2300)); c.lineTo(2300, 1400); c.lineTo(-300, 1400); c.closePath();
   let g = c.createLinearGradient(0, 430, 0, 1100);
-  g.addColorStop(0, '#454a51'); g.addColorStop(0.07, PAL.steelHi); g.addColorStop(0.3, '#b4b9bf'); g.addColorStop(0.62, PAL.steel); g.addColorStop(0.72, '#6d737b'); g.addColorStop(1, '#50555c');
+  g.addColorStop(0, '#2d3136'); g.addColorStop(0.05, '#EEF0F2'); g.addColorStop(0.13, '#858c94'); g.addColorStop(0.3, '#c3c8cd'); g.addColorStop(0.5, '#7b828a'); g.addColorStop(0.68, '#4c5258'); g.addColorStop(1, '#2e3237');
   c.fillStyle = g; c.fill();
   c.save(); c.clip();
   for (let k = -2; k < 12; k++) {                      // 环形焊缝 + 霜斑（随推轨移动）
@@ -1176,9 +1186,9 @@ function S8(c, lt, fx) {
   for (let i = 25; i >= 0; i--) {
     const te = 0.4 + i * 0.1333, tau = lt - te; if (tau < 0) continue;
     const s = S8_SATS[i], ex = 720 - 70 * te + doorW * 0.5, ey = doorY + doorH * 0.5;
-    const f = 1 - Math.exp(-tau / 1.3), sc = 1 - 0.93 * f;
+    const f = 1 - Math.exp(-tau / 0.75), sc = 1 - 0.93 * f;
     const perp = [0.67, -0.74];
-    const x = ex + (VP[0] - ex) * f + perp[0] * s.j * 60 * f - 70 * (lt - te) * sc, y = ey + (VP[1] - ey) * f + perp[1] * s.j * 60 * f - 40 * (1 - Math.exp(-tau / 0.15)) * sc;
+    const x = ex + (VP[0] - ex) * f + perp[0] * s.j * 130 * f - 70 * (lt - te) * sc, y = ey + (VP[1] - ey) * f + perp[1] * s.j * 130 * f - 70 * (1 - Math.exp(-tau / 0.12)) * sc;
     const phi = s.ph + 0.45 * s.w * tau, face = Math.abs(Math.cos(phi)), hgt = 96 * face * sc + 3 * sc, wid = 230 * sc;
     const glint = Math.pow(Math.max(0, Math.sin(phi)), 40);
     c.save(); c.translate(x, y); c.rotate(-0.1 + 0.35 * s.j);
@@ -1189,7 +1199,7 @@ function S8(c, lt, fx) {
     for (let k = 1; k < 8; k++) { c.beginPath(); c.moveTo(-wid / 2 + (k * wid) / 8, -hgt / 2); c.lineTo(-wid / 2 + (k * wid) / 8, hgt / 2); c.stroke(); }
     c.fillStyle = rgba('#e2e6ec', 0.9); c.fillRect(-wid / 2, -hgt / 2 - 1, wid, Math.max(1, 2.5 * sc));
     c.restore();
-    if (glint > 0.02 || tau < 0.12) glow(c, x, y, 40 + 140 * sc, '#FFFFFF', Math.max(glint, tau < 0.12 ? 0.5 * (1 - tau / 0.12) : 0));
+    if (glint > 0.02 || tau < 0.12) glow(c, x, y, 20 + 60 * sc, '#FFFFFF', Math.max(glint, tau < 0.12 ? 0.5 * (1 - tau / 0.12) : 0));
     glow(c, x, y, 10 + 24 * sc, '#FFF6E8', 0.35);
   }
   c.restore();
@@ -1255,7 +1265,7 @@ function S10(c, lt, fx) {
   const k = Math.exp(-lt * 1.25), A = [lerp(P_MATCH[0], 1000, k), lerp(P_MATCH[1], 660, k)], Ra = 180 * k;
   if (lt < 2.6) {
     const eng = sixEngines({ rvac: [{ on: 0, heat: 0, cool: '#2a1712' }, { on: 1, heat: 1 }, { on: 1, heat: 1 }], rsl: [{ on: 1, heat: 0.4 }, { on: 1, heat: 0.4 }, { on: 1, heat: 0.4 }] });
-    aftView(c, { A, axisAng: 0.35, len: 520 * k, Ra, Rn: Ra * 0.62, tilt: 0.5, engines: eng, t: lt + 33.6, plumeLen: 700 * k + 60, tileSide: -1 });
+    aftView(c, { A, axisAng: 0.75, len: 900 * k, Ra, Rn: Ra * 0.7, tilt: 0.55, engines: eng, t: lt + 33.6, plumeLen: 700 * k + 60, tileSide: 1 });
   }
   glow(c, A[0], A[1], 30 + 60 * (1 - k), '#E4E0FF', 0.6 + 0.4 * smooth(2.0, 3.0, lt));
   fx.post.tint = mix([255, 199, 148], [255, 245, 235], smooth(0, 3.2, lt)).map((v) => v / 255);
@@ -1297,29 +1307,33 @@ function S12(c, lt, fx) {
 
 // ---------------------------------------------------------------- S13 卡冈图雅 44.8–56.0 · S14 环 56.0–60.0（同一个连续镜头）
 const photonAlpha = (rc) => Math.asin(3 * Math.sqrt(3) * Math.sqrt(1 - 2 / rc) / rc);
-const bhRc = (tau) => lerp(34, 26, smooth(0, 14.8, tau));
+const bhRc = (tau) => { const x = inv(0, 14.8, tau); return lerp(36, 26, 1 - Math.pow(1 - x, 2.2)); };
 const BH_TAN0 = Math.tan(25 * DEG), BH_TAN1 = (Math.tan(photonAlpha(26)) * 540) / RING_PX;   // 片尾光子环半径 = RING_PX
 function bhCam(t) {
   const tau = t - 44.8, rc = bhRc(tau);
   const x = inv(6.4, 14.8, tau), incl = (3.5 + 86.5 * x * x * (3 - 2 * x)) * DEG;
   const az = 0.3 * tau * DEG, ci = Math.cos(incl), si = Math.sin(incl), ca = Math.cos(az), sa = Math.sin(az);
   const pos = [rc * ci * sa, rc * si, rc * ci * ca], up = [-si * sa, ci, -si * ca];
-  const f = v3.norm(v3.mul(pos, -1)), r = v3.norm(v3.cross(up, f)), u = v3.cross(f, r);
+  const drift = (1 - smooth(0, 7.5, tau)) * rc * 0.16;   // 开场黑洞偏在画右，慢慢摇回正中（片尾必须居中以便循环）
+  const f0 = v3.norm(v3.mul(pos, -1)), r0 = v3.norm(v3.cross(up, f0));
+  const f = v3.norm(v3.sub(v3.mul(r0, -drift), pos)), r = v3.norm(v3.cross(up, f)), u = v3.cross(f, r);
   const roll = 5 * DEG * (1 - spring(tau, 0.3, 1)), cr = Math.cos(roll), sr = Math.sin(roll);
   const rot = [v3.add(v3.mul(r, cr), v3.mul(u, sr)), v3.add(v3.mul(u, cr), v3.mul(r, -sr)), f];
   return { pos, rot, tanFov: lerp(BH_TAN0, BH_TAN1, smooth(2, 14.8, tau)), rc };
 }
 const ringPx = (t) => { const cam = bhCam(t); return (Math.tan(photonAlpha(cam.rc)) / cam.tanFov) * 540; };
-function flickPhase(t) { let ph = 0; const n = 120, a = 48.0; for (let i = 0; i < n; i++) { const tt = a + ((t - a) * (i + 0.5)) / n; ph += 11 * (1 - 0.94 * smooth(53.6, 57.6, tt)); } return (ph * (t - a)) / n; }
+const bhCenter = (t) => project(bhCam(t), [0, 0, 0]);
+function flickPhase(t) { let ph = 0; const n = 120, a = 47.0; for (let i = 0; i < n; i++) { const tt = a + ((t - a) * (i + 0.5)) / n; ph += 11 * (1 - 0.94 * smooth(53.6, 57.6, tt)); } return (ph * (t - a)) / n; }
 function S13(c, lt, fx, t) {
   const cam = bhCam(t);
-  fx.bg = { mode: 4, cam, rc: cam.rc, diskT: t * 7, stars: 0.55, skyRot: IDENT, diskGain: lerp(1, 0.38, smooth(51.2, 57.5, t)) };
-  if (t >= 48.0) {                                     // 飞船：横穿透镜光弧 → 落向内盘 → 在光子环上「凝固」
-    const R = ringPx(t), P_END = [960 + Math.cos(-40 * DEG) * R * 1.04, 540 + Math.sin(-40 * DEG) * R * 1.04];
-    const b = smooth(48.0, 51.2, t), cIn = smooth(51.0, 56.0, t);
-    const cross = [lerp(260, 1330, b), 540 - 1.42 * R - 12 * Math.sin(Math.PI * b)];
+  fx.bg = { mode: 4, cam, rc: cam.rc, diskT: t * 11, stars: 0.55, skyRot: IDENT, diskGain: lerp(1, 0.38, smooth(51.2, 57.5, t)) };
+  if (t < 45.4) fx.post.white = 0.7 * Math.exp(-(t - 44.8) / 0.18);   // 冲出虫洞
+  if (t >= 47.0) {                                     // 飞船：横穿透镜光弧 → 落向内盘 → 在光子环上「凝固」
+    const R = ringPx(t), C = bhCenter(t), P_END = [C[0] + Math.cos(-40 * DEG) * R * 1.04, C[1] + Math.sin(-40 * DEG) * R * 1.04];
+    const b = smooth(47.0, 51.2, t), cIn = smooth(51.0, 56.0, t);
+    const cross = [lerp(C[0] - 760, C[0] + 330, b), C[1] - 1.42 * R - 12 * Math.sin(Math.PI * b)];
     const x = lerp(cross[0], P_END[0], cIn), y = lerp(cross[1], P_END[1], cIn);
-    const pxm = lerp(1.6, 0.25, smooth(51.2, 56.5, t));
+    const pxm = lerp(2.7, 0.25, smooth(51.2, 56.5, t));
     const slow = smooth(53.6, 57.6, t);
     const fl = 0.55 + 0.45 * Math.sin(TAU * flickPhase(t));
     const pc = mix('#DCE4FF', '#FF4A20', slow), dim = 1 - 0.75 * slow;
@@ -1328,7 +1342,7 @@ function S13(c, lt, fx, t) {
       drawShip(c, { sil: 1, silCol: '#050403', pxm }); c.restore();
     }
     const ex = x - Math.cos(0.5 * cIn) * 27 * pxm, ey = y - Math.sin(0.5 * cIn) * 27 * pxm;
-    glow(c, ex, ey, 14 + 40 * pxm, pc, (0.5 + 0.5 * fl) * dim);
+    glow(c, ex, ey, 10 + 16 * pxm, pc, (0.5 + 0.5 * fl) * dim);
     glow(c, ex, ey, 4 + 6 * pxm, '#FFFFFF', 0.8 * fl * dim * (1 - slow));
   }
   Object.assign(fx.post, { bloom: 0.95, thresh: 0.8, vig: 0.16 });

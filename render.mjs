@@ -18,6 +18,7 @@
  *   --width --height --fps         覆盖预设
  *   --page <html>                  默认 index.html
  *   --start <s> --end <s>          要（重新）渲染的时间范围，默认整片
+ *   --ranges 0-3.2,16-19.2         多段时间范围（覆盖 --start/--end）
  *   --seg <s>                      分段长度，默认 2
  *   --workers <n>                  并行浏览器页数，默认 min(4, CPU 数)
  *   --crf <n>                      默认 16
@@ -136,14 +137,18 @@ const segFrames = Math.round(SEG * FPS);
 const nSeg = Math.ceil(totalFrames / segFrames);
 const segFile = (k) => path.join(segDir, `seg_${String(k).padStart(4, '0')}.mp4`);
 
-const f0 = Math.max(0, Math.floor(+(args.start ?? 0) * FPS));
-const f1 = Math.min(totalFrames, Math.ceil(+(args.end ?? DURATION) * FPS));
+const ranges = args.ranges ? String(args.ranges).split(',').map((r) => r.split('-').map(Number)) : [[+(args.start ?? 0), +(args.end ?? DURATION)]];
 const todo = [];
 const pageMtime = fs.statSync(pagePath).mtimeMs;
-for (let k = Math.floor(f0 / segFrames); k * segFrames < f1; k++) {
-  if (args['skip-existing'] && fs.existsSync(segFile(k)) && fs.statSync(segFile(k)).mtimeMs > pageMtime) continue;
-  todo.push(k);
+for (const [a, b] of ranges) {
+  const f0 = Math.max(0, Math.floor(a * FPS)), f1 = Math.min(totalFrames, Math.ceil(b * FPS));
+  for (let k = Math.floor(f0 / segFrames); k * segFrames < f1; k++) {
+    if (todo.includes(k)) continue;
+    if (args['skip-existing'] && fs.existsSync(segFile(k)) && fs.statSync(segFile(k)).mtimeMs > pageMtime) continue;
+    todo.push(k);
+  }
 }
+todo.sort((x, y) => x - y);
 if (!todo.length) console.log('render    nothing to do (all segments up to date)');
 
 const nWorkers = Math.max(1, Math.min(+(args.workers ?? Math.min(4, os.cpus().length)), todo.length || 1));
